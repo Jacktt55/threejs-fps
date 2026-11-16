@@ -946,6 +946,7 @@ function setupShot() {
     // beacon, defenders holding the site in the frame.
     game.phase = 'end';
     game.phaseTime = ROUND.endSeconds;
+    game.score.att = 1; // the end pose depicts an attackers' round win, so the score must read 1:0, not 0:0
     player.pos.set(17, 0, -9);
     lookAtYawPitch(faceToward(17, -9, 22, -20), -0.03);
     ctBots[0].spawnAt(24, -14);
