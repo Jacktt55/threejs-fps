@@ -1,7 +1,3 @@
-// Dustyard — procedural PBR textures, generated in memory at load time.
-// Zero external image files, zero network. createTextures() returns one
-// named set per surface: { map, bumpMap, roughnessMap }, all canvas-made,
-// repeat-wrapped, at modest sizes (256, or 512 for the ground).
 import * as THREE from 'three';
 
 function canvasTexture(size, draw, { srgb = false } = {}) {
@@ -17,9 +13,6 @@ function canvasTexture(size, draw, { srgb = false } = {}) {
   return texture;
 }
 
-// A diffuse/bump/roughness triple from three painters. The bump painter draws
-// in greyscale (dark = recessed); the roughness painter draws in greyscale
-// (white = rough, black = smooth).
 function makeSet(size, diffuse, bump, roughness) {
   return {
     map: canvasTexture(size, diffuse, { srgb: true }),
@@ -48,10 +41,6 @@ function noise(ctx, size, count, alpha) {
   ctx.globalAlpha = 1;
 }
 
-// ---------------------------------------------------------------------------
-// Weathered sandstone blocks: warm tan courses, dark mortar lines, grime
-// streaks running down from the top of each block.
-// ---------------------------------------------------------------------------
 function sandstoneSet() {
   const rows = 4;
   const blockH = 256 / rows;
@@ -70,7 +59,6 @@ function sandstoneSet() {
           ctx.fillRect(x + 3, y + 3, s / 2 - 6, blockH - 6);
         }
       }
-      // Grime streaks.
       ctx.fillStyle = '#5d4c33';
       for (let i = 0; i < 26; i++) {
         const x = Math.random() * s;
@@ -105,21 +93,16 @@ function sandstoneSet() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Industrial concrete: flat grey with tile seams, stains and fine grain.
-// ---------------------------------------------------------------------------
 function concreteSet() {
   return makeSet(
     256,
     (ctx, s) => {
       ctx.fillStyle = '#7d7f82';
       ctx.fillRect(0, 0, s, s);
-      // Tile seams.
       ctx.strokeStyle = '#5c5e61';
       ctx.lineWidth = 3;
       ctx.beginPath(); ctx.moveTo(s / 2, 0); ctx.lineTo(s / 2, s); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(0, s / 2); ctx.lineTo(s, s / 2); ctx.stroke();
-      // Stains.
       for (let i = 0; i < 12; i++) {
         ctx.fillStyle = '#55575a';
         ctx.globalAlpha = 0.1 + Math.random() * 0.15;
@@ -148,10 +131,6 @@ function concreteSet() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Corrugated metal shipping container in one colour: vertical ridges with a
-// light/shadow pair, rivet dots along the edges and rust streaks.
-// ---------------------------------------------------------------------------
 function containerSet(base, dark, light, rust) {
   return makeSet(
     256,
@@ -169,13 +148,11 @@ function containerSet(base, dark, light, rust) {
         ctx.fillStyle = grad;
         ctx.fillRect(x, 0, ridge, s);
       }
-      // Rivets.
       ctx.fillStyle = dark;
       for (let i = 0; i < 8; i++) {
         ctx.beginPath(); ctx.arc(i * ridge + ridge / 2, 10, 3, 0, Math.PI * 2); ctx.fill();
         ctx.beginPath(); ctx.arc(i * ridge + ridge / 2, s - 10, 3, 0, Math.PI * 2); ctx.fill();
       }
-      // Rust streaks.
       ctx.fillStyle = rust;
       for (let i = 0; i < 14; i++) {
         ctx.globalAlpha = 0.1 + Math.random() * 0.2;
@@ -204,9 +181,6 @@ function containerSet(base, dark, light, rust) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Yellow/black diagonal hazard stripes, for the bombsite borders.
-// ---------------------------------------------------------------------------
 function hazardSet() {
   return makeSet(
     256,
@@ -240,16 +214,12 @@ function hazardSet() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Slatted wooden tactical crate with a stencilled marking.
-// ---------------------------------------------------------------------------
 function crateSet() {
   return makeSet(
     256,
     (ctx, s) => {
       ctx.fillStyle = '#6b5233';
       ctx.fillRect(0, 0, s, s);
-      // Horizontal planks.
       for (let i = 0; i < 4; i++) {
         const y = (i * s) / 4;
         const shade = 96 + Math.floor(Math.random() * 22);
@@ -259,13 +229,11 @@ function crateSet() {
         ctx.lineWidth = 3;
         ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(s, y); ctx.stroke();
       }
-      // Frame and diagonals.
       ctx.strokeStyle = '#3d2f1a';
       ctx.lineWidth = 10;
       ctx.strokeRect(5, 5, s - 10, s - 10);
       ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(s, s); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(s, 0); ctx.lineTo(0, s); ctx.stroke();
-      // Stencil marking.
       ctx.fillStyle = '#e8dcc0';
       ctx.globalAlpha = 0.85;
       ctx.font = 'bold 34px system-ui, sans-serif';
@@ -296,10 +264,6 @@ function crateSet() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Asphalt / gravel ground with painted lane markings: a faded centre line,
-// edge lines and a worn arrow.
-// ---------------------------------------------------------------------------
 function asphaltSet() {
   return makeSet(
     512,
@@ -309,7 +273,6 @@ function asphaltSet() {
       speckle(ctx, s, 5200, '#000000', 0.28, 4);
       speckle(ctx, s, 2600, '#9a9da2', 0.16, 4);
       speckle(ctx, s, 900, '#6a6d72', 0.2, 5);
-      // Cracks.
       ctx.strokeStyle = '#1e1f22';
       ctx.lineWidth = 2;
       for (let i = 0; i < 10; i++) {
@@ -323,14 +286,12 @@ function asphaltSet() {
         }
         ctx.stroke();
       }
-      // Painted lane markings: faded centre dashes and edge lines.
       ctx.fillStyle = '#d8c95a';
       ctx.globalAlpha = 0.75;
       for (let y = 0; y < s; y += 64) ctx.fillRect(s / 2 - 4, y, 8, 34);
       ctx.fillStyle = '#cfcfc8';
       ctx.fillRect(14, 0, 5, s);
       ctx.fillRect(s - 19, 0, 5, s);
-      // Worn arrow.
       ctx.globalAlpha = 0.55;
       ctx.beginPath();
       ctx.moveTo(s / 2, s * 0.72);
@@ -357,9 +318,6 @@ function asphaltSet() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Build every set once and hand them back by name.
-// ---------------------------------------------------------------------------
 export function createTextures() {
   return {
     sandstone: sandstoneSet(),
@@ -371,4 +329,27 @@ export function createTextures() {
     crate: crateSet(),
     asphalt: asphaltSet(),
   };
+}
+
+export function createStencilTexture(text, color = '#f2a33c') {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, 512, 128);
+  ctx.fillStyle = color;
+  ctx.font = '900 64px system-ui, sans-serif';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, 16, 66);
+  ctx.globalAlpha = 0.25;
+  for (let i = 0; i < 260; i++) {
+    const x = Math.random() * 512;
+    const y = 20 + Math.random() * 88;
+    ctx.fillRect(x, y, 2, 2);
+  }
+  ctx.globalAlpha = 1;
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 4;
+  return texture;
 }

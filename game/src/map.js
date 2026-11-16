@@ -1,18 +1,7 @@
-// Dustyard — a balanced competitive 5v5 tactical arena, built 100% offline.
-//   T Spawn (west) ---- Mid (double doors) ---- CT Spawn (east)
-//   Long A corridor (north) -> Bombsite A (open yard, catwalk, crates)
-//   B Tunnels (south)       -> Bombsite B (container yard)
-// Every solid box is stored as a THREE.Box3 in `colliders`, used for player /
-// bot AABB physics and for raycast bullet occlusion. All coordinates match
-// the WAYPOINTS in constants.js.
 import * as THREE from 'three';
 import { MAP, PALETTE, WAYPOINTS, ROUTES, SPAWN_POINTS } from './constants.js';
-import { createTextures } from './textures.js';
+import { createTextures, createStencilTexture } from './textures.js';
 
-// Full PBR set: diffuse + bump + roughness, each cloned per material so
-// repeats can differ. (The headless "washed-out ground" seen during Step 3
-// was a test-harness artefact — the boot script created a throwaway WebGL
-// context before navigation — not the maps. See boot-test.js.)
 function makeMaterial(set, repeatX = 1, repeatY = 1) {
   const map = set.map.clone();
   map.repeat.set(repeatX, repeatY);
@@ -39,7 +28,6 @@ function makeMetalMaterial(set, repeatX = 1, repeatY = 1) {
   return material;
 }
 
-// Circle (player/bot, radius r at height y) vs the colliders, XZ plane only.
 export function collidesAt(colliders, x, z, radius, y = 0.8) {
   for (const box of colliders) {
     if (box.min.y > y || box.max.y < y) continue;
@@ -52,7 +40,6 @@ export function collidesAt(colliders, x, z, radius, y = 0.8) {
   return false;
 }
 
-// 3D segment vs one Box3, slab method. True when the segment touches the box.
 function segmentHitsBox(a, b, box) {
   let tmin = 0;
   let tmax = 1;
@@ -80,7 +67,6 @@ function segmentHitsBox(a, b, box) {
   return true;
 }
 
-// True when any solid box stands between points a and b.
 export function segmentBlocked(a, b, colliders) {
   for (const box of colliders) {
     if (segmentHitsBox(a, b, box)) return true;
@@ -120,13 +106,11 @@ export function createMap(scene) {
     return mesh;
   }
 
-  // --- Ground -----------------------------------------------------------------
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(64, 48), asphalt);
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
   scene.add(ground);
 
-  // Concrete slabs: mid courtyard and the B warehouse floor.
   const midFloor = new THREE.Mesh(new THREE.PlaneGeometry(18, 12), concreteFloor);
   midFloor.rotation.x = -Math.PI / 2;
   midFloor.position.set(0, 0.01, 0);
@@ -139,30 +123,21 @@ export function createMap(scene) {
   bFloor.receiveShadow = true;
   scene.add(bFloor);
 
-  // --- Perimeter walls (sandstone) --------------------------------------------
   addBox(0, -24.5, 65, 1, H, sandstone);
   addBox(0, 24.5, 65, 1, H, sandstone);
   addBox(-32.5, 0, 1, 49, H, sandstone);
   addBox(32.5, 0, 1, 49, H, sandstone);
 
-  // --- Interior walls (concrete) ----------------------------------------------
-  // Mid divider with the double-door gap (z in [-2, 2]).
   addBox(-6, -6, 1, 8, H, concrete);
   addBox(-6, 6, 1, 8, H, concrete);
-  // Long A corridor: north wall with the entry gap (x in [12, 24]).
   addBox(-10, -18, 44, 1, H, concrete);
   addBox(28, -18, 8, 1, H, concrete);
-  // Site A south wall with the A Main gap (x in [12, 20]).
   addBox(26, -10, 12, 1, H, concrete);
-  // Site B north wall with the B Main gap (x in [12, 18]).
   addBox(25, 8, 14, 1, H, concrete);
-  // B Tunnels north wall with the gap into B (x in [8, 12]).
   addBox(-10, 18, 36, 1, H, concrete);
-  // Low cover walls in mid (waist-high, h = 1.2).
   addBox(4, 5, 4, 1, 1.2, concrete);
   addBox(2, -7, 4, 1, 1.2, concrete);
 
-  // --- Crates (slatted wood) ----------------------------------------------------
   const crates = [
     [24, -12], [27, -18], [15, -20], // site A yard
     [3, 3], [-3, -4], // mid
@@ -171,18 +146,11 @@ export function createMap(scene) {
   ];
   for (const [x, z] of crates) addBox(x, z, 1.2, 1.2, 1.2, crateMat);
 
-  // --- Shipping containers ------------------------------------------------------
-  // B yard: blue, rust, and an olive one stacked on the blue.
   addBox(24, 12, 6, 2.6, 2.6, blueMetal);
   addBox(17, 20, 2.6, 6, 2.6, rustMetal);
   addBox(24, 12, 6, 2.6, 2.6, oliveMetal, { y: 2.6 });
-  // T-side cover.
   addBox(-14, -14, 6, 2.6, 2.6, rustMetal);
 
-  // --- Site A catwalk -----------------------------------------------------------
-  // Elevated platform over the north edge of site A, on four pillars, with a
-  // ramp climbing up from the west. (Vertical traversal lands in a later step;
-  // the platform and pillars are solid for bullets and movement now.)
   addBox(22, -20, 12, 4, 0.3, concrete, { y: 2.7, shadow: true });
   for (const [px, pz] of [[16.5, -21.5], [27.5, -21.5], [16.5, -18.5], [27.5, -18.5]]) {
     addBox(px, pz, 0.4, 0.4, 2.7, concrete);
@@ -197,7 +165,70 @@ export function createMap(scene) {
   ramp.updateMatrixWorld(true);
   colliders.push(new THREE.Box3().setFromObject(ramp));
 
-  // --- Bombsite hazard borders ----------------------------------------------------
+  addBox(-6, 0, 1, 4, 1, concrete, { y: 3 }); // mid double doors
+  addBox(16, -10, 8, 1, 1, concrete, { y: 3 }); // A Main gap
+  addBox(12.25, -10, 0.5, 1, 3, concrete);
+  addBox(19.75, -10, 0.5, 1, 3, concrete);
+  addBox(15, 8, 6, 1, 1, concrete, { y: 3 }); // B Main gap
+  addBox(12.25, 8, 0.5, 1, 3, concrete);
+  addBox(17.75, 8, 0.5, 1, 3, concrete);
+
+  const steel = new THREE.MeshStandardMaterial({ color: 0x3a3f45, roughness: 0.4, metalness: 0.8 });
+  for (const z of [-21.9, -18.1]) {
+    addBox(22, z, 12, 0.08, 0.08, steel, { y: 3.85 });
+    addBox(22, z, 12, 0.06, 0.06, steel, { y: 3.4 });
+  }
+
+  function pipe(x, y, z, len, r, axis) {
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 10), steel);
+    m.position.set(x, y, z);
+    if (axis === 'x') m.rotation.z = Math.PI / 2;
+    m.castShadow = true;
+    scene.add(m);
+  }
+  pipe(0, 2.2, -23.9, 60, 0.12, 'x');
+  pipe(0, 2.55, -23.9, 60, 0.09, 'x');
+  pipe(-31.9, 2, -20, 4, 0.12, 'y');
+  pipe(31.9, 2, 20, 4, 0.12, 'y');
+
+  function truck(x, z, ry, mat) {
+    addBox(x, z, 4.6, 2.2, 1.5, mat, { y: 0.9, ry });
+    const cabX = x + Math.cos(ry) * 3;
+    const cabZ = z - Math.sin(ry) * 3;
+    addBox(cabX, cabZ, 1.8, 2.2, 1.9, mat, { y: 0.95, ry });
+    const wheelMat = new THREE.MeshStandardMaterial({ color: 0x14161a, roughness: 0.95 });
+    for (const [lx, lz] of [[-1.5, -1.1], [1.5, -1.1], [-1.5, 1.1], [1.5, 1.1]]) {
+      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.3, 12), wheelMat);
+      wheel.rotation.x = Math.PI / 2;
+      wheel.position.set(
+        x + lx * Math.cos(ry) + lz * Math.sin(ry),
+        0.45,
+        z - lx * Math.sin(ry) + lz * Math.cos(ry),
+      );
+      wheel.castShadow = true;
+      scene.add(wheel);
+    }
+  }
+  truck(-20, -8, 0, oliveMetal);
+  truck(-16, 14, Math.PI / 2, rustMetal);
+
+  addBox(8, 2, 3, 0.3, 1.1, crateMat, { ry: 0.5 });
+  addBox(-10, 8, 3, 0.3, 1.1, crateMat, { ry: -0.4 });
+
+  function stencil(text, x, y, z, ry, w = 5) {
+    const tex = createStencilTexture(text);
+    const plane = new THREE.Mesh(
+      new THREE.PlaneGeometry(w, w / 4),
+      new THREE.MeshBasicMaterial({ map: tex, transparent: true }),
+    );
+    plane.position.set(x, y, z);
+    plane.rotation.y = ry;
+    scene.add(plane);
+  }
+  stencil('A SITE ➔', 16, 1.8, -9.44, 0); // A Main gap, south face
+  stencil('B SITE ➔', 15, 1.8, 7.44, Math.PI); // B Main gap, north face
+  stencil('MID ➔', -6.56, 1.8, 6, -Math.PI / 2); // mid divider, west face
+
   function hazardBorder(cx, cz, w, d) {
     const y = 0.02;
     addBox(cx, cz - d / 2, w, 1, 0.04, hazardMat, { y, solid: false, shadow: false });
@@ -208,9 +239,6 @@ export function createMap(scene) {
   hazardBorder(21, -16, 15, 11); // site A
   hazardBorder(20.5, 14.5, 14, 12); // site B
 
-  // --- Lighting and atmosphere ------------------------------------------------------
-  // Bright dusty daylight: a hard warm sun plus a strong sky/ground bounce
-  // so the yard reads as sunlit sand, not night.
   const sun = new THREE.DirectionalLight(0xffe8c0, 3.4);
   sun.position.set(30, 42, -20);
   sun.castShadow = true;
@@ -227,7 +255,6 @@ export function createMap(scene) {
   const hemi = new THREE.HemisphereLight(0xbfd9ff, 0x8a6f4d, 1.15);
   scene.add(hemi);
 
-  // Gradient sky dome (shader, BackSide, unaffected by fog).
   const sky = new THREE.Mesh(
     new THREE.SphereGeometry(140, 24, 16),
     new THREE.ShaderMaterial({
@@ -246,7 +273,6 @@ export function createMap(scene) {
   scene.fog = new THREE.FogExp2(0xd8c49a, 0.0035);
   scene.background = new THREE.Color(0x9fc3e0);
 
-  // Glowing site beacons: a pole, a lamp and a point light over each site.
   function beacon(x, z, colorHex) {
     const pole = new THREE.Mesh(
       new THREE.CylinderGeometry(0.08, 0.08, 4.4, 8),
@@ -272,7 +298,6 @@ export function createMap(scene) {
   beacon(21, -16, PALETTE.siteA);
   beacon(20.5, 14.5, PALETTE.siteB);
 
-  // --- Ambient dust motes -----------------------------------------------------------
   const dustCount = 350;
   const dustPositions = new Float32Array(dustCount * 3);
   const dustSpeeds = new Float32Array(dustCount);

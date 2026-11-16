@@ -6,63 +6,48 @@
 <title>Dustyard — a three.js tactical FPS</title>
 <link rel="stylesheet" href="./styles.css">
 <script type="importmap">
-{
-  "imports": {
-    "three": "./vendor/three/three.module.min.js"
-  }
-}
+{ "imports": { "three": "./vendor/three/three.module.min.js" } }
 </script>
 </head>
 <body>
 <div id="game"></div>
-
 <div id="hud">
   <div id="flash-overlay"></div>
   <div id="scope-overlay"><span id="scope-label">2.5x</span></div>
-  <div id="crosshair"><i></i><i></i><i></i><i></i></div>
-  <div id="hitmarker"><i></i><i></i><i></i><i></i></div>
-
+  <canvas id="radar" width="170" height="170"></canvas>
   <div id="top-bar">
-    <div id="score"><span id="score-att">0</span><span class="score-sep">:</span><span id="score-def">0</span></div>
-    <div id="timer">1:45</div>
+    <div id="score"><span class="score-team att">ATT</span> <span id="score-att">0</span><span class="score-sep">:</span><span id="score-def">0</span> <span class="score-team def">DEF</span></div>
+    <div id="timer">0:05</div>
     <div id="round-label">Round 1</div>
   </div>
-
   <div id="round-banner"><div class="banner-title"></div><div class="banner-sub"></div></div>
-
   <div id="killfeed"></div>
-
+  <div id="crosshair"><i class="n"></i><i class="s"></i><i class="w"></i><i class="e"></i><i class="dot"></i></div>
+  <div id="hitmarker"><i></i><i></i><i></i><i></i></div>
   <div id="bottom-left">
-    <div id="health">
-      <div class="label">HEALTH</div>
-      <div id="health-bar"><div id="health-fill"></div></div>
-      <div id="health-num">100</div>
-    </div>
+    <div class="bar-row"><span class="label">HEALTH</span><div class="bar-track"><div id="health-fill"></div></div><span id="health-num">100</span></div>
+    <div class="bar-row hidden" id="armor-wrap"><span class="label">ARMOR</span><div class="bar-track"><div id="armor-fill"></div></div></div>
     <div id="money-wrap"><span class="label">MONEY</span><span id="money">$800</span></div>
   </div>
-
   <div id="bottom-right">
     <div id="weapon-name">AK-47</div>
     <div id="ammo"><span id="ammo-mag">30</span><span class="ammo-sep">/</span><span id="ammo-reserve">90</span></div>
+    <div id="weapon-selector"></div>
     <div class="hint">R reload &middot; B buy &middot; 1-0 weapons &middot; right-click AWP zoom</div>
   </div>
-
+  <div id="engage-pill">CLICK TO ENGAGE &bull; [WASD] MOVE &bull; [B] BUY &bull; [E] PLANT/DEFUSE</div>
+  <div id="plant-prompt"></div>
+  <div id="plant-track"><div id="plant-fill"></div></div>
   <div id="buy-menu">
-    <div class="buy-title">BUY MENU <span class="buy-sub">freeze time — press B to close</span></div>
-    <div id="buy-menu-items"></div>
-    <button id="buy-menu-close" type="button">Close (B)</button>
+    <div class="buy-title">BUY MENU <span id="buy-money">$800</span></div>
+    <div id="buy-wheel"></div>
+    <div class="buy-hint">Click a slot or press 1&ndash;9 &bull; B to close</div>
+  </div>
+  <div id="scoreboard">
+    <div class="sb-team"><h3>ATTACKERS</h3><table><thead><tr><th>Player</th><th>K</th><th>D</th><th>$</th></tr></thead><tbody id="score-t"></tbody></table></div>
+    <div class="sb-team"><h3>DEFENDERS</h3><table><thead><tr><th>Player</th><th>K</th><th>D</th><th>$</th></tr></thead><tbody id="score-ct"></tbody></table></div>
   </div>
 </div>
-
-<div id="start-overlay">
-  <div class="start-panel">
-    <h1>DUSTYARD</h1>
-    <p class="start-sub">A three.js tactical FPS — attackers vs defenders, plant the bomb or eliminate the other team.</p>
-    <p class="start-controls">WASD move &middot; Shift run &middot; C crouch &middot; Space jump &middot; Mouse aim &middot; Click shoot &middot; Right-click AWP zoom &middot; R reload &middot; B buy &middot; 1-0 switch weapon</p>
-    <button id="start-button" type="button">Click to play</button>
-  </div>
-</div>
-
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>

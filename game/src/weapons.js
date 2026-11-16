@@ -1,14 +1,7 @@
-// Dustyard — first-person weapon viewmodels, CS-style ballistics and
-// throwable grenades. Everything is built from three.js geometry and
-// procedural materials: zero external models, zero files, zero network.
-// Hot loops reuse pooled meshes and preallocated vectors; nothing is
-// allocated per frame.
 import * as THREE from 'three';
 import { WEAPONS } from './constants.js';
 import { collidesAt, segmentBlocked } from './map.js';
 
-// Weapons that are not in the WEAPONS economy table (knife and C4 are
-// equipment, not purchases) carry their local stats here.
 const LOCAL_DEFS = {
   knife: {
     kind: 'melee', name: 'Knife', damage: 40, fireRate: 0.5, range: 2.2,
@@ -30,7 +23,6 @@ const SMOKE_CLOUDS = 2;
 const SMOKE_PARTICLES = 48;
 const GRENADE_SLOTS = 3;
 
-// Shared materials: created once, reused by every viewmodel.
 const MAT = {
   gunmetal: new THREE.MeshStandardMaterial({ color: 0x1c1e22, roughness: 0.45, metalness: 0.75 }),
   steel: new THREE.MeshStandardMaterial({ color: 0x55595e, roughness: 0.3, metalness: 0.9 }),
@@ -46,7 +38,6 @@ const MAT = {
   smokeGrey: new THREE.MeshStandardMaterial({ color: 0x6a6f66, roughness: 0.8, metalness: 0.1 }),
 };
 
-// Soft round sprite for smoke particles (canvas-made, no file).
 function makeSmokeTexture() {
   const c = document.createElement('canvas');
   c.width = 64;
@@ -62,8 +53,6 @@ function makeSmokeTexture() {
 }
 const SMOKE_TEXTURE = makeSmokeTexture();
 
-// Deterministic spray pattern: a small seeded LCG so every burst of N shots
-// kicks the same way, like a CS spray you can learn.
 function makeSpray(recoil, shots = 10) {
   const pattern = new Float32Array(shots * 2);
   let s = 1234567;
@@ -72,7 +61,6 @@ function makeSpray(recoil, shots = 10) {
     return ((s >>> 0) / 4294967296) * 2 - 1;
   };
   for (let i = 0; i < shots; i++) {
-    // Pitch climbs then settles; yaw weaves left-right.
     pattern[i * 2] = recoil * (0.7 + 0.45 * Math.abs(next())) * (1 + i * 0.08);
     pattern[i * 2 + 1] = recoil * 0.55 * next() * (i === 0 ? 0.2 : 1);
   }
@@ -91,7 +79,6 @@ function cyl(rTop, rBottom, len, mat, x = 0, y = 0, z = 0, seg = 10) {
   return m;
 }
 
-// A gloved fist: palm plus a curled-finger block. `rx` tilts it forward.
 function makeHand(rx = 0) {
   const hand = new THREE.Group();
   hand.add(box(0.075, 0.085, 0.1, MAT.glove, 0, 0, 0));
@@ -135,8 +122,6 @@ export class Weapon {
     }
     this.sprays.knife = makeSpray(0);
 
-    // One viewmodel group per weapon, all attached to the camera; only the
-    // active one is visible.
     this.groups = {};
     this.parts = {};
     this.muzzles = {};
@@ -146,8 +131,6 @@ export class Weapon {
     this.activeGroup.visible = true;
     camera.add(this.activeGroup);
 
-    // Muzzle flash: one point light plus an emissive star, re-parented to
-    // the active viewmodel at its muzzle on every switch.
     this.flashLight = new THREE.PointLight(0xffc36b, 0, 9, 2);
     this.flashLife = 0;
     const starMat = new THREE.MeshBasicMaterial({
@@ -182,7 +165,6 @@ export class Weapon {
     return WEAPONS[this.key] ?? LOCAL_DEFS[this.key];
   }
 
-  // --- Viewmodels ---------------------------------------------------------------
   buildAllViewmodels() {
     this.buildRifle('ak47', {
       woodFurniture: true, magCurve: 0.35, barrelLen: 0.34, suppressor: false,
@@ -208,8 +190,6 @@ export class Weapon {
     this.buildGrenadeViewmodel('smoke');
   }
 
-  // Shared rifle skeleton: receiver, barrel, handguard, magazine, stock,
-  // grip, sights, both gloved hands. Options specialise the silhouette.
   buildRifle(key, o) {
     const g = new THREE.Group();
     const furniture = o.woodFurniture ? MAT.wood : MAT.polymer;
@@ -231,7 +211,6 @@ export class Weapon {
       g.add(sup);
     }
     if (o.scope) {
-      // AWP: long scope tube on a rail, with a glinting front lens.
       const rail = box(0.04, 0.02, 0.4, MAT.steel, 0, 0.06, -0.02);
       const tube = cyl(0.03, 0.03, 0.3, MAT.gunmetal, 0, 0.1, -0.05);
       tube.rotation.x = Math.PI / 2;
@@ -381,7 +360,6 @@ export class Weapon {
     }
   }
 
-  // --- Effect pools ---------------------------------------------------------------
   buildPools(scene) {
     this.tracers = [];
     for (let i = 0; i < TRACER_COUNT; i++) {
@@ -433,7 +411,6 @@ export class Weapon {
     }
     this._sparkIdx = 0;
 
-    // One reusable explosion fireball + light.
     this.explosion = {
       mesh: new THREE.Mesh(
         new THREE.SphereGeometry(1, 16, 12),
@@ -448,7 +425,6 @@ export class Weapon {
     this.explosion.mesh.visible = false;
     scene.add(this.explosion.mesh, this.explosion.light);
 
-    // Smoke clouds: Points with a soft sprite texture, two slots.
     this.smokeClouds = [];
     for (let i = 0; i < SMOKE_CLOUDS; i++) {
       const geo = new THREE.BufferGeometry();
@@ -469,7 +445,6 @@ export class Weapon {
     }
     this._smokeIdx = 0;
 
-    // Grenade projectiles in flight.
     this.grenadeSlots = [];
     for (let i = 0; i < GRENADE_SLOTS; i++) {
       const mesh = new THREE.Mesh(
@@ -486,11 +461,6 @@ export class Weapon {
     }
   }
 
-  // --- Firing -------------------------------------------------------------------------
-  // Returns null when nothing happens, { dry: true } on an empty click,
-  // { thrown } for grenades, { plant: true } for C4, { melee } for the knife,
-  // otherwise { damage, headshot, spread, recoilKick } for the caller to
-  // resolve with a raycast.
   fire(now, moving = false, airborne = false, crouching = false) {
     const def = this.def;
     if (this.reloading || now - this.lastShot < def.fireRate) return null;
@@ -517,13 +487,10 @@ export class Weapon {
     this.kick = 1;
     this.triggerMuzzleFlash();
     this.ejectShell();
-    // Firing the AWP kicks you out of the scope, like in CS.
     if (this.key === 'awp' && this.zoom > 0) {
       this.zoom = 0;
       this.zoomChanged = true;
     }
-    // Spray: the burst counter resets after a pause, so a fresh burst
-    // starts at the top of the pattern.
     if (now - this._burstStart > 0.45) this.burstCount = 0;
     if (this.burstCount === 0) this._burstStart = now;
     const spray = this.sprays[this.key] ?? this.sprays.ak47;
@@ -594,8 +561,6 @@ export class Weapon {
     return true;
   }
 
-  // Buy one of something: a firearm refills its reserve, a grenade adds one
-  // (max two of each type), armour marks the player as protected.
   buy(key) {
     const def = WEAPONS[key];
     if (!def) return false;
@@ -612,15 +577,11 @@ export class Weapon {
     return true;
   }
 
-  // Ammo as the HUD shows it: grenades show their remaining count.
   ammoForHud() {
     if (this.def.kind === 'grenade') return { mag: this.grenades[this.key] ?? 0, reserve: 0 };
     return { mag: this.mag, reserve: this.reserve };
   }
 
-  // --- AWP zoom -------------------------------------------------------------------------
-  // cycleZoom / switchTo set zoomChanged so the caller (main.js) knows to
-  // re-apply camera FOV and the scope overlay.
   cycleZoom() {
     if (this.key !== 'awp' || this.reloading) return this.zoom;
     this.zoom = (this.zoom + 1) % 3;
@@ -632,7 +593,6 @@ export class Weapon {
     return this.zoom === 1 ? 30 : this.zoom === 2 ? 15 : 74;
   }
 
-  // --- Muzzle flash, shells, tracers, decals, sparks ---------------------------------------
   triggerMuzzleFlash() {
     this.flashLife = 0.06;
     this.flashLight.intensity = 30;
@@ -747,7 +707,6 @@ export class Weapon {
     c.mat.opacity = 0;
   }
 
-  // --- Grenades in flight --------------------------------------------------------------------
   throwGrenade(type) {
     if (!this.grenadeSlots.length) return;
     let slot = this.grenadeSlots.find((s) => !s.active);
@@ -774,8 +733,6 @@ export class Weapon {
       this.showExplosion(pos);
       this.hooks.onExplosion?.(pos.clone(), def.radius, def.damage, 'he');
     } else if (slot.type === 'flash') {
-      // Whiteout strength: closer and more head-on is worse; looking away
-      // or being behind a wall cuts it hard.
       const eye = this.camera.position;
       this._tmpA.subVectors(pos, eye);
       const dist = this._tmpA.length();
@@ -800,21 +757,15 @@ export class Weapon {
     parts.mag.visible = true;
   }
 
-  // --- Per-frame update -------------------------------------------------------------------------
-  // `state` carries what the viewmodel animation needs: normalised move
-  // speed (0..1), whether the player is sprinting / on the ground /
-  // crouching. All pools and the reload animation advance here.
   update(dt, state = {}) {
     this.time += dt;
     const speed = state.speed ?? 0;
     const sprinting = state.sprinting ?? false;
     const onGround = state.onGround ?? true;
 
-    // Recoil and bloom settle when not firing.
     this.kick *= Math.max(0, 1 - dt * 7);
     this.bloom = Math.max(0, this.bloom - dt * 1.4);
 
-    // Viewmodel: walk bob, sprint tilt, recoil kickback, reload dip.
     const g = this.activeGroup;
     const base = this.vmBase[this.key] ?? [0.22, -0.2, -0.45];
     if (onGround && speed > 0.05) this.bobPhase += dt * (5 + speed * 9);
@@ -831,16 +782,13 @@ export class Weapon {
       const parts = this.parts[this.key];
       if (parts && parts.mag) {
         if (t < 0.35) {
-          // Mag drops out and tilts away.
           const k = t / 0.35;
           parts.mag.position.y = parts.magBaseY - k * 0.22;
           parts.mag.rotation.x = parts.magBaseRot + k * 0.55;
           parts.mag.visible = true;
         } else if (t < 0.65) {
-          // Swap: old mag out of view.
           parts.mag.visible = false;
         } else {
-          // Fresh mag slides back in from below.
           const k = (t - 0.65) / 0.35;
           parts.mag.visible = true;
           parts.mag.position.y = parts.magBaseY - 0.22 + k * 0.22;
@@ -857,12 +805,10 @@ export class Weapon {
     const targetTilt = sprinting ? -0.14 : 0;
     g.rotation.z += (targetTilt - g.rotation.z) * Math.min(1, dt * 10);
 
-    // C4 arming light blinks while the brick is held.
     if (this.key === 'c4' && this.parts.c4) {
       this.parts.c4.ledMat.emissiveIntensity = Math.sin(this.time * 6) > 0 ? 2.5 : 0.15;
     }
 
-    // Muzzle flash decays over ~60 ms.
     if (this.flashLife > 0) {
       this.flashLife -= dt;
       const k = Math.max(0, this.flashLife / 0.06);
@@ -874,7 +820,6 @@ export class Weapon {
       }
     }
 
-    // Tracers fade fast; shells arc and settle; decals linger then fade.
     for (const t of this.tracers) {
       if (t.life <= 0) continue;
       t.life -= dt;
@@ -921,7 +866,6 @@ export class Weapon {
       if (b.life <= 0) b.points.visible = false;
     }
 
-    // Explosion fireball expands and fades.
     if (this.explosion && this.explosion.life > 0) {
       this.explosion.life -= dt;
       const t = Math.max(0, this.explosion.life / 0.5);
@@ -934,7 +878,6 @@ export class Weapon {
       }
     }
 
-    // Smoke clouds drift, expand and thin out over ~15 s.
     for (const c of this.smokeClouds) {
       if (c.life <= 0) continue;
       c.life -= dt;
@@ -957,7 +900,6 @@ export class Weapon {
       if (c.life <= 0) c.points.visible = false;
     }
 
-    // Grenades in flight: gravity, ground and wall bounces, fuse.
     for (const slot of this.grenadeSlots) {
       if (!slot.active) continue;
       slot.vel.y -= 18 * dt;

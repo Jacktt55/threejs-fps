@@ -1,14 +1,6 @@
-// Dustyard — full game balance constants: weapons, teams, economy, timers and
-// the waypoint graph. The map in map.js is built to these exact coordinates,
-// so a waypoint here always sits on walkable ground in the arena.
 
-// The simulation runs at a fixed 60 Hz, apart from rendering.
 export const FIXED_STEP = 1 / 60;
 
-// ---------------------------------------------------------------------------
-// Teams: Counter-Terrorists (navy / steel) vs Terrorists (desert / crimson).
-// Each side carries both a three.js hex and a CSS string for the HUD.
-// ---------------------------------------------------------------------------
 export const TEAMS = {
   ct: {
     name: 'Counter-Terrorists',
@@ -40,14 +32,6 @@ export const PALETTE = {
   siteB: 0x53c785,
 };
 
-// ---------------------------------------------------------------------------
-// Weapons. Firearms carry damage (body hit, close range), headshot multiplier,
-// fire rate (seconds between shots), magazine and reserve ammo, reload time,
-// spread (radians, standing still), recoil (pitch kick per shot) and a
-// movement penalty (fraction of speed lost while the weapon is held).
-// Grenades carry a blast radius and a fuse instead of a magazine; armour
-// carries a damage-reduction fraction instead of damage.
-// ---------------------------------------------------------------------------
 export const WEAPONS = {
   ak47: {
     kind: 'rifle',
@@ -165,13 +149,8 @@ export const WEAPONS = {
   },
 };
 
-// Buy-menu order: what the shop shows, in the order it shows it.
 export const BUY_MENU = ['ak47', 'm4a1', 'awp', 'mp5', 'deagle', 'he', 'flash', 'smoke', 'kevlar'];
 
-// ---------------------------------------------------------------------------
-// Player movement and body. The player is a circle of `radius` in the XZ
-// plane; the eye sits at eyeHeight (crouchEyeHeight while crouching).
-// ---------------------------------------------------------------------------
 export const PLAYER = {
   walkSpeed: 4.4,
   runSpeed: 6.4,
@@ -185,10 +164,6 @@ export const PLAYER = {
   friction: 11,
 };
 
-// ---------------------------------------------------------------------------
-// Economy. Money is awarded at the end of each round and for kills, plants
-// and defuses; the buy menu spends it during the freeze time.
-// ---------------------------------------------------------------------------
 export const ECONOMY = {
   startMoney: 800,
   maxMoney: 16000,
@@ -199,9 +174,6 @@ export const ECONOMY = {
   defuseReward: 300,
 };
 
-// ---------------------------------------------------------------------------
-// Round timers (seconds).
-// ---------------------------------------------------------------------------
 export const ROUND = {
   freezeSeconds: 5,
   roundSeconds: 105,
@@ -209,22 +181,12 @@ export const ROUND = {
   c4Seconds: 40,
 };
 
-// ---------------------------------------------------------------------------
-// Map bounds in world units (x east-west, z north-south, y up).
-// ---------------------------------------------------------------------------
 export const MAP = {
   halfWidth: 32,
   halfDepth: 24,
   wallHeight: 4,
 };
 
-// ---------------------------------------------------------------------------
-// Waypoints. Every coordinate matches a walkable spot in map.js:
-//   T Spawn (west) and CT Spawn (east); Bombsite A (north-east yard, with a
-//   catwalk); Bombsite B (south-east container yard); Mid courtyard with
-//   double doors; Long A corridor along the north edge; B Tunnels along the
-//   south edge. Routes are ordered waypoint keys a bot follows in order.
-// ---------------------------------------------------------------------------
 export const WAYPOINTS = {
   tSpawn: { x: -28, z: 0 },
   ctSpawn: { x: 28, z: 0 },
@@ -256,7 +218,6 @@ export const ROUTES = {
   ctMid: ['ctSpawn', 'mid', 'midDoors'],
 };
 
-// Five spawn slots per team, fanned around the spawn waypoint.
 export const SPAWN_POINTS = {
   attackers: [
     { x: -28, z: -2 },
@@ -273,3 +234,77 @@ export const SPAWN_POINTS = {
     { x: 26, z: 0 },
   ],
 };
+
+export const HIT_ZONES = { head: 4, torso: 1, limb: 0.75 };
+
+export const BOT = {
+  walkSpeed: 2.6,
+  runSpeed: 3.6,
+  sightRange: 32,
+  engageRange: 26,
+  holdRange: 9,
+  loseSightSeconds: 2.5,
+  reactionMin: 0.35,
+  reactionMax: 0.6,
+  burstMin: 3,
+  burstMax: 5,
+  burstPauseMin: 0.6,
+  burstPauseMax: 1.2,
+  hitBase: 0.55, // hit chance inside 10 m, before falloff/movement
+  hitFalloff: 0.018, // chance lost per metre past 10 m
+  hitMovingTarget: 0.7, // multiplier when the target is moving fast
+  headshotChance: 0.08,
+  strafeSeconds: 1.4,
+  holdSeconds: 2.0,
+  rotateSeconds: 6,
+};
+
+export const BOT_ROSTER = {
+  attackers: [
+    { name: 'Dune', weapon: 'ak47', route: 'tLongA' },
+    { name: 'Ember', weapon: 'm4a1', route: 'tMidA' },
+    { name: 'Falk', weapon: 'mp5', route: 'tTunnelsB' },
+    { name: 'Havoc', weapon: 'ak47', route: 'tMidB' },
+  ],
+  defenders: [
+    { name: 'Sable', weapon: 'm4a1', route: 'ctA' },
+    { name: 'Vex', weapon: 'mp5', route: 'ctB' },
+    { name: 'Iris', weapon: 'awp', route: 'ctMid' },
+    { name: 'Rook', weapon: 'ak47', route: 'ctA' },
+    { name: 'Onyx', weapon: 'm4a1', route: 'ctB' },
+  ],
+};
+
+export const BOMB = {
+  plantSeconds: 3,
+  defuseSeconds: 5,
+  radius: 9,
+  damage: 220,
+  beepStart: 1.0, // first beep interval; shrinks as the timer runs down
+  beepMin: 0.22,
+  beepShrink: 0.82,
+};
+
+export const AUTOPILOT = {
+  engageDelay: 0.3,
+  walkSpeed: 3.2,
+  aimLerp: 6, // yaw/pitch smoothing rate towards the target
+  burstShots: 3, // shots per burst, then a short pause
+  burstPause: 0.7,
+  path: [
+    { x: -28, z: 0 },
+    { x: -14, z: 0 },
+    { x: -6, z: 0 },
+    { x: 2, z: -4 },
+    { x: 10, z: -8 },
+    { x: 14, z: -12 },
+    { x: 18, z: -14 },
+  ],
+};
+
+export const BLOOM = { strength: 0.35, radius: 0.4, threshold: 0.85 };
+export const TONE_EXPOSURE = 1.05;
+
+export const BUY_WINDOW_SECONDS = 15;
+
+export const RADAR = { range: 40, playerDot: 4, botDot: 3, siteDot: 5 };
