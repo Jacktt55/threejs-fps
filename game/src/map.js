@@ -9,6 +9,10 @@ import * as THREE from 'three';
 import { MAP, PALETTE, WAYPOINTS, ROUTES, SPAWN_POINTS } from './constants.js';
 import { createTextures } from './textures.js';
 
+// Full PBR set: diffuse + bump + roughness, each cloned per material so
+// repeats can differ. (The headless "washed-out ground" seen during Step 3
+// was a test-harness artefact — the boot script created a throwaway WebGL
+// context before navigation — not the maps. See boot-test.js.)
 function makeMaterial(set, repeatX = 1, repeatY = 1) {
   const map = set.map.clone();
   map.repeat.set(repeatX, repeatY);
@@ -205,7 +209,9 @@ export function createMap(scene) {
   hazardBorder(20.5, 14.5, 14, 12); // site B
 
   // --- Lighting and atmosphere ------------------------------------------------------
-  const sun = new THREE.DirectionalLight(0xffe0b3, 2.4);
+  // Bright dusty daylight: a hard warm sun plus a strong sky/ground bounce
+  // so the yard reads as sunlit sand, not night.
+  const sun = new THREE.DirectionalLight(0xffe8c0, 3.4);
   sun.position.set(30, 42, -20);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
@@ -218,7 +224,7 @@ export function createMap(scene) {
   sun.shadow.bias = -0.0004;
   scene.add(sun);
 
-  const hemi = new THREE.HemisphereLight(0x8fa8c8, 0x5a4a38, 0.75);
+  const hemi = new THREE.HemisphereLight(0xbfd9ff, 0x8a6f4d, 1.15);
   scene.add(hemi);
 
   // Gradient sky dome (shader, BackSide, unaffected by fog).
@@ -229,16 +235,16 @@ export function createMap(scene) {
       depthWrite: false,
       fog: false,
       uniforms: {
-        top: { value: new THREE.Color(0x2e4a6b) },
-        bottom: { value: new THREE.Color(0xd98a4a) },
+        top: { value: new THREE.Color(0x6fa8dc) },
+        bottom: { value: new THREE.Color(0xf0c98a) },
       },
       vertexShader: 'varying vec3 vPos; void main() { vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
       fragmentShader: 'varying vec3 vPos; uniform vec3 top; uniform vec3 bottom; void main() { float h = normalize(vPos).y * 0.5 + 0.5; gl_FragColor = vec4(mix(bottom, top, smoothstep(0.0, 0.6, h)), 1.0); }',
     }),
   );
   scene.add(sky);
-  scene.fog = new THREE.FogExp2(0x191c22, 0.0075);
-  scene.background = new THREE.Color(PALETTE.canvas);
+  scene.fog = new THREE.FogExp2(0xd8c49a, 0.0035);
+  scene.background = new THREE.Color(0x9fc3e0);
 
   // Glowing site beacons: a pole, a lamp and a point light over each site.
   function beacon(x, z, colorHex) {

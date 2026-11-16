@@ -42,9 +42,23 @@ scene.add(camera);
 
 const map = createMap(scene);
 const sounds = new SoundBank();
-const weapon = new Weapon(camera);
+const weapon = new Weapon(camera, scene, {
+  colliders: map.colliders,
+  onExplosion: (pos, radius, damage) => handleExplosion(pos, radius, damage),
+  onFlash: (strength) => {
+    hud.flashbang(strength);
+    if (strength > 0.25) sounds.play('flashbang');
+  },
+  onBounce: () => sounds.play('bounce'),
+  onSmoke: () => sounds.play('smokePop'),
+});
 const raycaster = new THREE.Raycaster();
 raycaster.far = 90;
+
+// Reused temporaries for shooting (no per-shot allocation).
+const _muzzle = new THREE.Vector3();
+const _traceEnd = new THREE.Vector3();
+const _hitNormal = new THREE.Vector3();
 
 // --- Bots (defenders) ----------------------------------------------------------
 const bots = [
@@ -78,6 +92,26 @@ const game = {
 
 const keys = new Set();
 let firing = false;
+let stepAcc = 0;
+
+// Keep the HUD ammo readout in sync after firing, reloading, switching or
+// buying. Grenades show their remaining count instead of mag/reserve.
+function syncAmmoHud() {
+  const a = weapon.ammoForHud();
+  hud.setAmmo(a.mag, a.reserve, weapon.reloading);
+  hud.setWeaponName(weapon.def.name);
+}
+
+// Apply a pending AWP zoom change (or a reset after switching weapons):
+// camera FOV plus the scope overlay.
+function applyZoom() {
+  if (!weapon.zoomChanged) return;
+  weapon.zoomChanged = false;
+  camera.fov = weapon.currentFov();
+  camera.updateProjectionMatrix();
+  if (weapon.zoom > 0) hud.showScope(weapon.zoom);
+  else hud.hideScope();
+}
 
 function lookAtYawPitch(yaw, pitch) {
   player.yaw = yaw;
@@ -101,9 +135,9 @@ function respawnAll() {
   bots[2].spawnAt(SPAWN_POINTS.defenders[2].x, SPAWN_POINTS.defenders[2].z);
   bots[3].spawnAt(SPAWN_POINTS.defenders[3].x, SPAWN_POINTS.defenders[3].z);
   weapon.switchTo('ak47', game.time);
+  applyZoom();
   hud.setHealth(player.health);
-  hud.setAmmo(weapon.mag, weapon.reserve);
-  hud.setWeaponName(weapon.def.name);
+  syncAmmoHud();
   hud.setMoney(player.money);
   hud.setScore(game.score.att, game.score.def);
   hud.setRound(game.round);
@@ -137,10 +171,25 @@ function endRound(winner) {
 }
 
 // --- Input -----------------------------------------------------------------------
+// Weapon select keys. While the buy menu is open (freeze time) the same
+// digits buy from the menu instead of switching weapons.
+const SWITCH_KEYS = {
+  Digit1: 'ak47',
+  Digit2: 'm4a1',
+  Digit3: 'mp5',
+  Digit4: 'awp',
+  Digit5: 'deagle',
+  Digit6: 'he',
+  Digit7: 'flash',
+  Digit8: 'smoke',
+  Digit9: 'knife',
+  Digit0: 'c4',
+};
+
 document.addEventListener('keydown', (e) => {
   keys.add(e.code);
   if (e.code === 'KeyR') {
-    if (weapon.startReload(game.time)) sounds.play('reload');
+    if (weapon.startReload(game.time)) sounds.play('reload', { reloadTime: weapon.def.reloadTime });
   }
   if (e.code === 'KeyB' && game.phase === 'freeze') {
     const menu = document.getElementById('buy-menu');
@@ -152,10 +201,32 @@ document.addEventListener('keydown', (e) => {
       document.exitPointerLock();
     }
   }
-  if (e.code === 'Digit1') weapon.switchTo('ak47', game.time);
-  if (e.code === 'Digit2') weapon.switchTo('mp5', game.time);
-  if (e.code === 'Digit3') weapon.switchTo('deagle', game.time);
-  if (e.code === 'Digit4') weapon.switchTo('awp', game.time);
+  const digit = /^Digit(\d)$/.exec(e.code);
+  if (digit) {
+    const n = Number(digit[1]);
+    const menu = document.getElementById('buy-menu');
+    if (menu.classList.contains('open') && game.phase === 'freeze' && n >= 1 && n <= BUY_MENU.length) {
+      const key = BUY_MENU[n - 1];
+      const price = WEAPONS[key].price;
+      if (player.money >= price && weapon.buy(key)) {
+        player.money -= price;
+        hud.setMoney(player.money);
+        syncAmmoHud();
+        sounds.play('click');
+      }
+      return;
+    }
+    const sw = SWITCH_KEYS[e.code];
+    if (sw) {
+      // Grenades can only be selected while you still carry one.
+      if (WEAPONS[sw]?.kind === 'grenade' && (weapon.grenades[sw] ?? 0) <= 0) return;
+      if (weapon.switchTo(sw, game.time)) {
+        applyZoom();
+        syncAmmoHud();
+        sounds.play('click');
+      }
+    }
+  }
 });
 document.addEventListener('keyup', (e) => keys.delete(e.code));
 
@@ -167,8 +238,19 @@ document.addEventListener('mousemove', (e) => {
   camera.rotation.set(player.pitch, player.yaw, 0, 'YXZ');
 });
 
+renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
+
 renderer.domElement.addEventListener('mousedown', (e) => {
-  if (!game.locked || e.button !== 0) return;
+  if (!game.locked) return;
+  // Right-click cycles the AWP scope (2.5x -> 5x -> hip).
+  if (e.button === 2) {
+    if (weapon.key === 'awp') {
+      weapon.cycleZoom();
+      applyZoom();
+    }
+    return;
+  }
+  if (e.button !== 0) return;
   firing = true;
   tryShoot();
 });
@@ -196,13 +278,60 @@ window.addEventListener('resize', () => {
 // --- Shooting ----------------------------------------------------------------------
 function tryShoot() {
   const moving = player.vel.lengthSq() > 1;
-  const result = weapon.fire(game.time, moving);
+  const result = weapon.fire(game.time, moving, !player.onGround, player.crouching);
   if (!result) return;
-  sounds.play('shot');
-  if (result.thrown) {
-    hud.addKillfeed(`You threw a ${weapon.def.name}`);
+  if (result.dry) {
+    sounds.play('dryFire');
     return;
   }
+  if (result.thrown) {
+    sounds.play('pin');
+    hud.addKillfeed(`You threw a ${weapon.def.name}`);
+    syncAmmoHud();
+    return;
+  }
+  if (result.plant) {
+    // C4 arming lands in a later step; the beep is the feedback for now.
+    sounds.play('plant');
+    return;
+  }
+  sounds.playShot(weapon.key);
+  applyZoom(); // firing the AWP un-scopes
+
+  if (result.melee) {
+    // Knife: a short-range swing straight ahead.
+    camera.updateMatrixWorld(true);
+    const dir = new THREE.Vector3();
+    camera.getWorldDirection(dir);
+    raycaster.set(camera.position, dir);
+    raycaster.far = result.range;
+    const targets = [];
+    for (const bot of bots) if (bot.alive) targets.push(...bot.hitMeshes);
+    const hits = raycaster.intersectObjects(targets, false);
+    raycaster.far = 90;
+    if (hits.length > 0) {
+      const owner = hits[0].object.userData?.bot;
+      if (owner) {
+        const died = owner.takeDamage(result.damage);
+        sounds.play(died ? 'kill' : 'hit');
+        hud.flashHitmarker(died);
+        if (died) {
+          player.money = Math.min(ECONOMY.maxMoney, player.money + ECONOMY.killReward);
+          hud.setMoney(player.money);
+          hud.addKillfeed(`You knifed ${owner.name} (+$${ECONOMY.killReward})`);
+          if (bots.every((b) => !b.alive)) endRound('att');
+        }
+      }
+    }
+    return;
+  }
+
+  // The recoil kick moves the aim before the shot is resolved, so a spray
+  // climbs the way it does in CS.
+  player.pitch = Math.max(-1.5, Math.min(1.5, player.pitch + result.recoilKick.pitch));
+  player.yaw += result.recoilKick.yaw;
+  camera.rotation.set(player.pitch, player.yaw, 0, 'YXZ');
+  camera.updateMatrixWorld(true);
   const dir = new THREE.Vector3();
   camera.getWorldDirection(dir);
   // Apply spread.
@@ -214,13 +343,30 @@ function tryShoot() {
   const targets = [];
   for (const bot of bots) if (bot.alive) targets.push(...bot.hitMeshes);
   const hits = raycaster.intersectObjects([...targets, ...map.meshes], false);
-  if (hits.length === 0) return;
+  weapon.getMuzzleWorldPosition(_muzzle);
+  syncAmmoHud();
+  if (hits.length === 0) {
+    _traceEnd.copy(camera.position).addScaledVector(dir, 90);
+    weapon.spawnTracer(_muzzle, _traceEnd);
+    return;
+  }
   const hit = hits[0];
+  weapon.spawnTracer(_muzzle, hit.point);
   const owner = hit.object.userData?.bot;
-  if (!owner) return; // hit the map, not a bot
+  if (!owner) {
+    // Wall hit: bullet-hole decal, impact sparks and a gritty tick.
+    if (hit.face?.normal) {
+      _hitNormal.copy(hit.face.normal).transformDirection(hit.object.matrixWorld);
+      weapon.spawnDecal(hit.point, _hitNormal);
+    }
+    weapon.spawnSparks(hit.point);
+    sounds.play('impact');
+    return;
+  }
   const isHead = hit.object.userData.part === 'head';
   const damage = result.damage * (isHead ? result.headshot : 1);
   const died = owner.takeDamage(damage);
+  if (isHead) sounds.play('headshot');
   sounds.play(died ? 'kill' : 'hit');
   hud.flashHitmarker(died);
   if (died) {
@@ -229,6 +375,37 @@ function tryShoot() {
     hud.addKillfeed(`You eliminated ${owner.name} (+$${ECONOMY.killReward})`);
     if (bots.every((b) => !b.alive)) endRound('att');
   }
+}
+
+// An HE detonation: radial falloff damage to bots and to the player
+// (armour halves it), plus the explosion sound.
+function handleExplosion(pos, radius, damage) {
+  sounds.play('explosion');
+  const falloff = (d) => Math.max(0.15, 1 - d / radius);
+  for (const bot of bots) {
+    if (!bot.alive) continue;
+    const d = Math.hypot(bot.position.x - pos.x, bot.position.z - pos.z);
+    if (d > radius) continue;
+    const died = bot.takeDamage(damage * falloff(d));
+    if (died) {
+      player.money = Math.min(ECONOMY.maxMoney, player.money + ECONOMY.killReward);
+      hud.setMoney(player.money);
+      hud.addKillfeed(`Explosion eliminated ${bot.name} (+$${ECONOMY.killReward})`);
+    }
+  }
+  const pd = Math.hypot(player.pos.x - pos.x, player.pos.z - pos.z);
+  if (pd <= radius) {
+    let dmg = damage * falloff(pd);
+    if (weapon.armor) dmg *= 0.5;
+    player.health -= dmg;
+    hud.setHealth(player.health);
+    if (player.health <= 0) {
+      player.health = 0;
+      hud.setHealth(0);
+      endRound('def');
+    }
+  }
+  if (bots.every((b) => !b.alive)) endRound('att');
 }
 
 // --- Simulation (fixed step) ----------------------------------------------------------
@@ -297,8 +474,26 @@ function step(dt) {
   camera.position.set(player.pos.x, player.pos.y + eyeHeight, player.pos.z);
 
   // Weapon: finish reloads, recover recoil, hold-to-fire for automatics.
-  if (weapon.finishReload(game.time)) sounds.play('click');
-  weapon.update(dt);
+  if (weapon.finishReload(game.time)) {
+    sounds.play('click');
+    syncAmmoHud();
+  }
+  const hSpeed = Math.hypot(player.vel.x, player.vel.z);
+  const sprinting = (keys.has('ShiftLeft') || keys.has('ShiftRight')) && hSpeed > 1;
+  weapon.update(dt, {
+    speed: Math.min(1, hSpeed / PLAYER.runSpeed),
+    sprinting,
+    onGround: player.onGround,
+  });
+  // Footsteps: one soft scuff per stride while moving on the ground.
+  if (player.onGround && hSpeed > 1.5) {
+    stepAcc += hSpeed * dt;
+    const stride = player.crouching ? 1.6 : 2.3;
+    if (stepAcc > stride) {
+      stepAcc = 0;
+      sounds.play('footstep');
+    }
+  }
   if (firing && weapon.def.automatic && game.locked) tryShoot();
 
   // Bots.
@@ -336,6 +531,10 @@ function animate(now) {
 }
 
 // --- Deterministic capture poses ------------------------------------------------------
+// Each pose sets the round phase explicitly, so the HUD is deterministic
+// even though the game clock freezes after two frames: the start pose is
+// the freeze (banner up, timer 0:05), play is a live round (no banner,
+// timer 1:45) and end is the round-end caption (sticky banner, timer 0:00).
 function setupShot() {
   if (shot === 'start') {
     player.pos.set(-28, 0, 0);
@@ -343,16 +542,27 @@ function setupShot() {
     bots[2].spawnAt(2, 1);
     bots[3].spawnAt(-2, -3);
   } else if (shot === 'play') {
-    player.pos.set(-2, 0, 4);
-    lookAtYawPitch(faceToward(-2, 4, 20, -16), 0);
+    // Mid courtyard, looking north-east down the A approach: the A-main
+    // crates, the catwalk and the site A beacon in frame, with the yard's
+    // ground texture filling the lower half.
+    game.phase = 'live';
+    game.phaseTime = ROUND.roundSeconds;
+    player.pos.set(-6, 0, 2);
+    lookAtYawPitch(faceToward(-6, 2, 20, -16), -0.06);
     bots[0].spawnAt(14, -8);
-    bots[1].spawnAt(18, -12);
+    bots[1].spawnAt(20, -12);
+    bots[2].spawnAt(2, -6);
+    hud.hideBanner();
   } else {
-    // end: on site A, looking at the catwalk and the beacon.
-    player.pos.set(16, 0, -12);
-    lookAtYawPitch(faceToward(16, -12, 22, -20), 0.02);
-    bots[0].spawnAt(24, -13);
-    bots[1].spawnAt(18, -18);
+    // end: on site A, looking across the yard at the catwalk and the
+    // beacon, defenders holding the site in the frame.
+    game.phase = 'end';
+    game.phaseTime = ROUND.endSeconds;
+    player.pos.set(17, 0, -9);
+    lookAtYawPitch(faceToward(17, -9, 22, -20), -0.03);
+    bots[0].spawnAt(24, -14);
+    bots[1].spawnAt(19, -18);
+    hud.showBanner('Attackers win the round', 'Site A secured — +$3250', true);
   }
   hud.setHealth(player.health);
   hud.setAmmo(weapon.mag, weapon.reserve);
@@ -360,7 +570,7 @@ function setupShot() {
   hud.setMoney(player.money);
   hud.setScore(game.score.att, game.score.def);
   hud.setRound(game.round);
-  hud.setTimer(ROUND.roundSeconds);
+  hud.setTimer(game.phase === 'end' ? 0 : game.phaseTime);
 }
 
 // --- Boot ------------------------------------------------------------------------------

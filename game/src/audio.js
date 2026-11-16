@@ -1,11 +1,18 @@
-// Synthesised sound effects via WebAudio. No audio files, no network.
-// Every call is guarded so the game keeps working when AudioContext is
-// unavailable (headless browser, autoplay policy, or no audio device).
+// Dustyard — procedural tactical SFX, synthesised with the Web Audio API.
+// Zero audio files, zero network. A shared white-noise buffer is built once
+// when the context unlocks; every effect is an oscillator and/or filtered
+// noise burst with an exponential decay envelope, so no per-frame allocation
+// happens in the hot path. Every call is guarded: when AudioContext is
+// unavailable (headless browser, autoplay policy, no audio device) the game
+// keeps running silently.
 export class SoundBank {
   constructor() {
     this.ctx = null;
     this.muted = false;
+    this.volume = 0.25;
     this.master = null;
+    this.noiseBuf = null;
+    this._stepAlt = 0;
   }
 
   // Create the context on a user gesture (pointer lock / start button).
@@ -19,8 +26,13 @@ export class SoundBank {
       if (!AC) return false;
       this.ctx = new AC();
       this.master = this.ctx.createGain();
-      this.master.gain.value = 0.25;
+      this.master.gain.value = this.volume;
       this.master.connect(this.ctx.destination);
+      // One second of white noise, reused by every noise-based effect.
+      const len = Math.floor(this.ctx.sampleRate);
+      this.noiseBuf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+      const data = this.noiseBuf.getChannelData(0);
+      for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
       return true;
     } catch {
       this.ctx = null;
@@ -30,18 +42,29 @@ export class SoundBank {
 
   setMuted(muted) {
     this.muted = muted;
-    if (this.master) this.master.gain.value = muted ? 0 : 0.25;
+    if (this.master) this.master.gain.value = muted ? 0 : this.volume;
+  }
+
+  // Master volume 0..1 (default 0.25); kept separate from mute so muting
+  // restores the previous level.
+  setVolume(level) {
+    this.volume = Math.max(0, Math.min(1, level));
+    if (this.master && !this.muted) this.master.gain.value = this.volume;
+  }
+
+  get ready() {
+    return !!this.ctx && !this.muted;
   }
 
   // A short oscillator blip with an exponential decay envelope.
-  tone(freq, dur, type = 'square', vol = 0.5, slideTo = null) {
+  tone(freq, dur, type = 'square', vol = 0.5, slideTo = null, delay = 0) {
     if (this.muted || !this.ctx || !this.master) return;
     try {
-      const t0 = this.ctx.currentTime;
+      const t0 = this.ctx.currentTime + delay;
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
       osc.type = type;
-      osc.frequency.setValueAtTime(freq, t0);
+      osc.frequency.setValueAtTime(Math.max(1, freq), t0);
       if (slideTo !== null) osc.frequency.exponentialRampToValueAtTime(Math.max(1, slideTo), t0 + dur);
       gain.gain.setValueAtTime(vol, t0);
       gain.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
@@ -54,34 +77,306 @@ export class SoundBank {
     }
   }
 
-  play(name) {
-    if (this.muted) return;
+  // A filtered burst of the shared noise buffer. `slideTo` sweeps the filter
+  // cutoff; `type` is any BiquadFilter type.
+  noise(dur, vol = 0.5, { type = 'lowpass', freq = 1200, q = 0.8, slideTo = null, delay = 0 } = {}) {
+    if (this.muted || !this.ctx || !this.master || !this.noiseBuf) return;
+    try {
+      const t0 = this.ctx.currentTime + delay;
+      const src = this.ctx.createBufferSource();
+      src.buffer = this.noiseBuf;
+      src.loop = true;
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = type;
+      filter.frequency.setValueAtTime(Math.max(20, freq), t0);
+      filter.Q.value = q;
+      if (slideTo !== null) filter.frequency.exponentialRampToValueAtTime(Math.max(20, slideTo), t0 + dur);
+      const gain = this.ctx.createGain();
+      gain.gain.setValueAtTime(vol, t0);
+      gain.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+      src.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.master);
+      src.start(t0);
+      src.stop(t0 + dur + 0.02);
+    } catch {
+      // Sound is cosmetic; never let it break the game.
+    }
+  }
+
+  // A short metallic click: high sine ping plus a noise tick.
+  click(freq = 2400, vol = 0.3, delay = 0) {
+    this.tone(freq, 0.03, 'sine', vol, freq * 0.6, delay);
+    this.noise(0.02, vol * 0.6, { type: 'highpass', freq: 4000, delay });
+  }
+
+  // --- Weapon shots -----------------------------------------------------------
+  // Each shot layers a noise crack (the muzzle blast) over a low body thump
+  // so the weapons stay distinct at a glance: AK is a hard bark, M4A1 a
+  // muffled suppressed cough, AWP a long cannon crack, MP5 a fast pop and
+  // the Desert Eagle a deep boom.
+  shotAk47() {
+    this.noise(0.1, 0.85, { type: 'lowpass', freq: 2600, slideTo: 320 });
+    this.noise(0.03, 0.5, { type: 'bandpass', freq: 3200, q: 1.5 });
+    this.tone(170, 0.1, 'square', 0.5, 55);
+  }
+
+  shotM4a1() {
+    // Suppressed: quieter, shorter, higher-pitched "pfft".
+    this.noise(0.07, 0.4, { type: 'bandpass', freq: 1900, q: 1.2, slideTo: 900 });
+    this.tone(230, 0.07, 'triangle', 0.28, 95);
+  }
+
+  shotAwp() {
+    // Heavy sniper crack, long tail, then the bolt cycle: clack-clack.
+    this.noise(0.2, 1.0, { type: 'lowpass', freq: 3600, slideTo: 180 });
+    this.noise(0.05, 0.6, { type: 'bandpass', freq: 2800, q: 1.5 });
+    this.tone(95, 0.24, 'square', 0.65, 32);
+    this.tone(52, 0.3, 'sine', 0.5, 28);
+    this.click(1800, 0.35, 0.38);
+    this.click(1400, 0.35, 0.55);
+  }
+
+  shotMp5() {
+    this.noise(0.05, 0.55, { type: 'bandpass', freq: 2300, q: 1.4, slideTo: 1100 });
+    this.tone(210, 0.06, 'square', 0.35, 85);
+  }
+
+  shotDeagle() {
+    // Cannon shot: deep boom with a long low tail.
+    this.noise(0.24, 1.0, { type: 'lowpass', freq: 1000, slideTo: 120 });
+    this.tone(120, 0.26, 'square', 0.7, 30);
+    this.tone(48, 0.34, 'sine', 0.6, 26);
+  }
+
+  shotKnife() {
+    // A fast whoosh: bandpass sweep up through the air.
+    this.noise(0.13, 0.35, { type: 'bandpass', freq: 500, q: 2, slideTo: 2600 });
+  }
+
+  dryFire() {
+    this.click(1100, 0.25);
+  }
+
+  // --- Reload / handling --------------------------------------------------------
+  // Metallic clicks scheduled across the weapon's reload time so the sound
+  // tracks the animation: mag release, mag out, mag in, bolt rack.
+  playReload(reloadTime = 2.5) {
+    const t = Math.max(0.6, reloadTime);
+    this.click(2000, 0.35, 0.02);
+    this.noise(0.05, 0.25, { type: 'bandpass', freq: 1500, q: 2, delay: t * 0.22 });
+    this.click(1600, 0.35, t * 0.3);
+    this.click(2300, 0.35, t * 0.62);
+    this.noise(0.06, 0.3, { type: 'bandpass', freq: 1100, q: 2, delay: t * 0.66 });
+    this.click(2600, 0.4, t * 0.9);
+  }
+
+  // --- Hits ---------------------------------------------------------------------
+  hit() {
+    this.tone(1250, 0.06, 'sine', 0.4, 900);
+  }
+
+  headshot() {
+    // Crisp "dink": bright metallic ping with a high partial.
+    this.tone(2450, 0.13, 'sine', 0.5, 2100);
+    this.tone(3680, 0.09, 'sine', 0.3, 3200);
+  }
+
+  kill() {
+    this.tone(900, 0.08, 'sine', 0.4, 500);
+    this.tone(1350, 0.11, 'sine', 0.4, 900, 0.09);
+  }
+
+  // --- Movement -----------------------------------------------------------------
+  footstep() {
+    // Soft scuff, alternating pitch so consecutive steps don't drone.
+    this._stepAlt = 1 - this._stepAlt;
+    const base = this._stepAlt === 0 ? 320 : 260;
+    this.noise(0.06, 0.16, { type: 'lowpass', freq: base, slideTo: 140 });
+  }
+
+  // --- Grenades -------------------------------------------------------------------
+  pin() {
+    this.click(3200, 0.4);
+    this.tone(900, 0.04, 'square', 0.2, 500, 0.05);
+  }
+
+  bounce() {
+    this.tone(150, 0.09, 'sine', 0.3, 65);
+    this.noise(0.04, 0.15, { type: 'lowpass', freq: 500 });
+  }
+
+  explosion() {
+    // Long low rumble with a sharp initial crack and a sub-bass tail.
+    this.noise(0.9, 1.1, { type: 'lowpass', freq: 900, slideTo: 55 });
+    this.noise(0.08, 0.7, { type: 'bandpass', freq: 2400, q: 1 });
+    this.tone(70, 0.8, 'sine', 0.8, 28);
+    this.tone(45, 1.0, 'sine', 0.55, 24, 0.08);
+  }
+
+  flashbang() {
+    // The pop, then a long high ear-ring that fades slowly.
+    this.noise(0.06, 0.8, { type: 'highpass', freq: 2500 });
+    this.tone(3150, 1.6, 'sine', 0.22, 2900);
+    this.tone(4720, 1.1, 'sine', 0.1, 4400, 0.05);
+  }
+
+  smokePop() {
+    this.noise(0.35, 0.4, { type: 'bandpass', freq: 700, q: 0.8, slideTo: 250 });
+  }
+
+  // --- Bomb -----------------------------------------------------------------------
+  c4Beep() {
+    this.tone(1250, 0.07, 'square', 0.32);
+  }
+
+  // An escalating beep series (plant beeps speed up as the timer runs down).
+  c4Countdown(beeps = 8, startInterval = 0.9) {
+    let delay = 0;
+    let interval = startInterval;
+    for (let i = 0; i < beeps; i++) {
+      this.c4BeepAt(delay);
+      delay += interval;
+      interval = Math.max(0.22, interval * 0.82);
+    }
+  }
+
+  c4BeepAt(delay) {
+    this.tone(1250, 0.07, 'square', 0.32, null, delay);
+  }
+
+  plant() {
+    this.tone(1000, 0.07, 'square', 0.3);
+    this.tone(1000, 0.07, 'square', 0.3, null, 0.16);
+    this.tone(1400, 0.12, 'square', 0.3, null, 0.34);
+  }
+
+  defuse() {
+    this.tone(1150, 0.06, 'square', 0.28);
+    this.tone(1150, 0.06, 'square', 0.28, null, 0.14);
+  }
+
+  // --- Round / UI -------------------------------------------------------------------
+  roundStart() {
+    this.tone(440, 0.12, 'sine', 0.35);
+    this.tone(660, 0.18, 'sine', 0.35, null, 0.14);
+  }
+
+  clickUi() {
+    this.click(800, 0.25);
+  }
+
+  impact() {
+    // Bullet hitting a wall: short gritty tick.
+    this.noise(0.05, 0.3, { type: 'bandpass', freq: 900, q: 1.2 });
+  }
+
+  // --- Dispatcher ---------------------------------------------------------------------
+  // `play` keeps the names the game already uses, and maps each weapon key
+  // to its own shot. New code should call playShot(key) directly.
+  play(name, opts) {
+    if (this.muted || !this.ctx) return;
     switch (name) {
       case 'shot':
-        this.tone(180, 0.09, 'square', 0.6, 60);
+        this.playShot(opts?.key ?? 'ak47');
+        break;
+      case 'shotAk47':
+        this.shotAk47();
+        break;
+      case 'shotM4a1':
+        this.shotM4a1();
+        break;
+      case 'shotAwp':
+        this.shotAwp();
+        break;
+      case 'shotMp5':
+        this.shotMp5();
+        break;
+      case 'shotDeagle':
+        this.shotDeagle();
+        break;
+      case 'shotKnife':
+        this.shotKnife();
+        break;
+      case 'dryFire':
+        this.dryFire();
         break;
       case 'reload':
-        this.tone(700, 0.05, 'sine', 0.3);
-        setTimeout(() => this.tone(500, 0.05, 'sine', 0.3), 120);
+        this.playReload(opts?.reloadTime ?? 2.5);
         break;
       case 'hit':
-        this.tone(1200, 0.06, 'sine', 0.4, 900);
+        this.hit();
+        break;
+      case 'headshot':
+        this.headshot();
         break;
       case 'kill':
-        this.tone(900, 0.08, 'sine', 0.4, 500);
-        setTimeout(() => this.tone(1300, 0.1, 'sine', 0.4), 90);
+        this.kill();
         break;
-      case 'roundStart':
-        this.tone(440, 0.12, 'sine', 0.35);
-        setTimeout(() => this.tone(660, 0.16, 'sine', 0.35), 140);
+      case 'footstep':
+        this.footstep();
+        break;
+      case 'pin':
+        this.pin();
+        break;
+      case 'bounce':
+        this.bounce();
+        break;
+      case 'explosion':
+        this.explosion();
+        break;
+      case 'flashbang':
+        this.flashbang();
+        break;
+      case 'smokePop':
+        this.smokePop();
+        break;
+      case 'c4Beep':
+        this.c4Beep();
         break;
       case 'plant':
-        this.tone(1000, 0.07, 'square', 0.3);
+        this.plant();
+        break;
+      case 'defuse':
+        this.defuse();
+        break;
+      case 'roundStart':
+        this.roundStart();
+        break;
+      case 'impact':
+        this.impact();
         break;
       case 'click':
-        this.tone(800, 0.04, 'sine', 0.25);
+        this.clickUi();
         break;
       default:
+        break;
+    }
+  }
+
+  // One call for "this weapon fired": resolves the key to its shot sound.
+  playShot(key) {
+    switch (key) {
+      case 'ak47':
+        this.shotAk47();
+        break;
+      case 'm4a1':
+        this.shotM4a1();
+        break;
+      case 'awp':
+        this.shotAwp();
+        break;
+      case 'mp5':
+        this.shotMp5();
+        break;
+      case 'deagle':
+        this.shotDeagle();
+        break;
+      case 'knife':
+        this.shotKnife();
+        break;
+      default:
+        this.shotAk47();
         break;
     }
   }

@@ -49,14 +49,25 @@ export function setRound(n) {
   if (round) round.textContent = `Round ${n}`;
 }
 
-export function showBanner(text, sub = '') {
+export function showBanner(text, sub = '', sticky = false) {
   const banner = el('round-banner');
   if (!banner) return;
   banner.querySelector('.banner-title').textContent = text;
   banner.querySelector('.banner-sub').textContent = sub;
   banner.classList.add('show');
   clearTimeout(showBanner._t);
-  showBanner._t = setTimeout(() => banner.classList.remove('show'), 2600);
+  // Sticky banners (the deterministic end-of-round capture pose) stay up
+  // until hideBanner() runs; normal banners fade after 2.6 s.
+  if (!sticky) showBanner._t = setTimeout(() => banner.classList.remove('show'), 2600);
+}
+
+// Hide the round banner immediately (used when the round goes live and in
+// the play/end capture poses, where the game clock is frozen).
+export function hideBanner() {
+  const banner = el('round-banner');
+  if (!banner) return;
+  clearTimeout(showBanner._t);
+  banner.classList.remove('show');
 }
 
 export function addKillfeed(text) {
@@ -109,4 +120,39 @@ export function hideStartOverlay() {
 export function showStartOverlay() {
   const overlay = el('start-overlay');
   if (overlay) overlay.classList.remove('hidden');
+}
+
+// AWP scope overlay: a dark vignette with a circular sight picture. The
+// HUD gains a `scoped` class so the crosshair hides while zoomed.
+export function showScope(level) {
+  const overlay = el('scope-overlay');
+  if (overlay) {
+    overlay.classList.add('show');
+    const label = el('scope-label');
+    if (label) label.textContent = level === 2 ? '5.0x' : '2.5x';
+  }
+  const hudEl = el('hud');
+  if (hudEl) hudEl.classList.add('scoped');
+}
+
+export function hideScope() {
+  const overlay = el('scope-overlay');
+  if (overlay) overlay.classList.remove('show');
+  const hudEl = el('hud');
+  if (hudEl) hudEl.classList.remove('scoped');
+}
+
+// Flashbang whiteout: slam to full white, then fade out over a duration
+// that grows with the strength of the flash.
+export function flashbang(strength) {
+  const overlay = el('flash-overlay');
+  if (!overlay) return;
+  const s = Math.max(0, Math.min(1, strength));
+  if (s <= 0.03) return;
+  overlay.style.transition = 'none';
+  overlay.style.opacity = String(s);
+  void overlay.offsetWidth; // force the style to apply before fading
+  const fadeMs = 600 + s * 1800;
+  overlay.style.transition = `opacity ${fadeMs}ms ease-out`;
+  overlay.style.opacity = '0';
 }
