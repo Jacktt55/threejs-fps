@@ -541,6 +541,10 @@ function setupShot() {
     lookAtYawPitch(faceToward(-28, 0, 0, 0), 0);
     bots[2].spawnAt(2, 1);
     bots[3].spawnAt(-2, -3);
+    // Re-assert the freeze banner as sticky: startRound()'s non-sticky call
+    // fades after 2.6 s of real time, which elapses before the capture
+    // freezes — the cover shot must keep the buy-phase banner up.
+    hud.showBanner(`Round ${game.round}`, 'Buy phase — press B to open the shop', true);
   } else if (shot === 'play') {
     // Mid courtyard, looking north-east down the A approach: the A-main
     // crates, the catwalk and the site A beacon in frame, with the yard's
